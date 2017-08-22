@@ -37,8 +37,10 @@ USBAudio::USBAudio(uint32_t frequency_in, uint8_t channel_nb_in, uint32_t freque
     this->channel_nb_out = channel_nb_out;
 
     // stereo -> *2, mono -> *1
-    PACKET_SIZE_ISO_IN = (FREQ_IN / 500) * channel_nb_in;
-    PACKET_SIZE_ISO_OUT = (FREQ_OUT / 500) * channel_nb_out;
+    //PACKET_SIZE_ISO_IN = ((FREQ_IN / 500) * channel_nb_in)+1;
+    //PACKET_SIZE_ISO_OUT = ((FREQ_OUT / 500) * channel_nb_out)+1;
+    PACKET_SIZE_ISO_IN = ((FREQ_IN / 500) * channel_nb_in);
+    PACKET_SIZE_ISO_OUT = ((FREQ_OUT / 500) * channel_nb_out);
 
     // STEREO -> left and right
     channel_config_in = (channel_nb_in == 1) ? CHANNEL_M : CHANNEL_L + CHANNEL_R;
@@ -98,11 +100,11 @@ bool USBAudio::readWrite(uint8_t * buf_read, uint8_t * buf_write) {
 }
 
 
-bool USBAudio::write(uint8_t * buf) {
+bool USBAudio::write(uint8_t * buf, uint32_t len) {
     writeIN = false;
     SOF_handler = false;
     if (interruptIN) {
-        USBDevice::writeNB(EPISO_IN, buf, PACKET_SIZE_ISO_OUT, PACKET_SIZE_ISO_OUT);
+        USBDevice::writeNB(EPISO_IN, buf, len, PACKET_SIZE_ISO_OUT);
     } else {
         buf_stream_out = buf;
     }
@@ -113,9 +115,9 @@ bool USBAudio::write(uint8_t * buf) {
     return true;
 }
 
-void USBAudio::writeSync(uint8_t *buf)
+void USBAudio::writeSync(uint8_t *buf, uint32_t len)
 {
-    USBDevice::writeNB(EPISO_IN, buf, PACKET_SIZE_ISO_OUT, PACKET_SIZE_ISO_OUT);
+    USBDevice::writeNB(EPISO_IN, buf, len, PACKET_SIZE_ISO_OUT);
 }
 
 uint32_t USBAudio::readSync(uint8_t *buf)

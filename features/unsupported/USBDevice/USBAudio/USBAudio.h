@@ -121,13 +121,13 @@ public:
     * @param buf pointer on the audio packet which will be sent
     * @returns true if successful
     */
-    bool write(uint8_t * buf);
+    bool write(uint8_t * buf, uint32_t len);
 
     /**
      * Write packet in endpoint fifo. assuming tx fifo is empty
      * @param buf pointer on the audio packet which will be sent
      */
-    void writeSync(uint8_t *buf);
+    void writeSync(uint8_t *buf, uint32_t len);
 
     /**
     * Write and read an audio packet at the same time (on the same frame)
