@@ -63,7 +63,6 @@ static SingletonPtr<PlatformMutex> _mutex;
 #   define STDERR_FILENO    2
 
 #else
-#   include <sys/stat.h>
 #   include <sys/syslimits.h>
 #   define PREFIX(x)    x
 #endif
@@ -254,7 +253,7 @@ extern "C" FILEHANDLE PREFIX(_open)(const char* name, int openmode) {
             /* The first part of the filename (between first 2 '/') is not a
              * registered mount point in the namespace.
              */
-            return handle_open_errors(-ENOENT, fh_i);
+            return handle_open_errors(-ENODEV, fh_i);
         }
 
         if (path.isFile()) {
@@ -262,7 +261,7 @@ extern "C" FILEHANDLE PREFIX(_open)(const char* name, int openmode) {
         } else {
             FileSystemHandle *fs = path.fileSystem();
             if (fs == NULL) {
-                return handle_open_errors(-ENOENT, fh_i);
+                return handle_open_errors(-ENODEV, fh_i);
             }
             int posix_mode = openmode_to_posix(openmode);
             int err = fs->open(&res, path.fileName(), posix_mode);
@@ -352,7 +351,9 @@ extern "C" void PREFIX(_exit)(int return_code) {
 }
 
 extern "C" void _ttywrch(int ch) {
+#if DEVICE_SERIAL
     serial_putc(&stdio_uart, ch);
+#endif
 }
 #endif
 
@@ -567,7 +568,7 @@ extern "C" int remove(const char *path) {
     FilePath fp(path);
     FileSystemHandle *fs = fp.fileSystem();
     if (fs == NULL) {
-        errno = ENOENT;
+        errno = ENODEV;
         return -1;
     }
 
@@ -587,7 +588,7 @@ extern "C" int rename(const char *oldname, const char *newname) {
     FileSystemHandle *fsNew = fpNew.fileSystem();
 
     if (fsOld == NULL) {
-        errno = ENOENT;
+        errno = ENODEV;
         return -1;
     }
 
@@ -627,7 +628,7 @@ extern "C" DIR *opendir(const char *path) {
     FilePath fp(path);
     FileSystemHandle* fs = fp.fileSystem();
     if (fs == NULL) {
-        errno = ENOENT;
+        errno = ENODEV;
         return NULL;
     }
 
@@ -679,7 +680,10 @@ extern "C" void seekdir(DIR *dir, off_t off) {
 extern "C" int mkdir(const char *path, mode_t mode) {
     FilePath fp(path);
     FileSystemHandle *fs = fp.fileSystem();
-    if (fs == NULL) return -1;
+    if (fs == NULL) {
+        errno = ENODEV;
+        return -1;
+    }
 
     int err = fs->mkdir(fp.fileName(), mode);
     if (err < 0) {
@@ -693,9 +697,29 @@ extern "C" int mkdir(const char *path, mode_t mode) {
 extern "C" int stat(const char *path, struct stat *st) {
     FilePath fp(path);
     FileSystemHandle *fs = fp.fileSystem();
-    if (fs == NULL) return -1;
+    if (fs == NULL) {
+        errno = ENODEV;
+        return -1;
+    }
 
     int err = fs->stat(fp.fileName(), st);
+    if (err < 0) {
+        errno = -err;
+        return -1;
+    } else {
+        return 0;
+    }
+}
+
+extern "C" int statvfs(const char *path, struct statvfs *buf) {
+    FilePath fp(path);
+    FileSystemHandle *fs = fp.fileSystem();
+    if (fs == NULL) {
+        errno = ENODEV;
+        return -1;
+    }
+
+    int err = fs->statvfs(fp.fileName(), buf);
     if (err < 0) {
         errno = -err;
         return -1;
@@ -734,6 +758,7 @@ extern "C" int errno;
 
 // Dynamic memory allocation related syscall.
 #if defined(TARGET_NUVOTON)
+
 // Overwrite _sbrk() to support two region model (heap and stack are two distinct regions).
 // __wrap__sbrk() is implemented in:
 // TARGET_NUMAKER_PFM_NUC472    targets/TARGET_NUVOTON/TARGET_NUC472/TARGET_NUMAKER_PFM_NUC472/TOOLCHAIN_GCC_ARM/nuc472_retarget.c
@@ -936,7 +961,11 @@ extern "C" WEAK void __iar_file_Mtxdst(__iar_Rmtx *mutex) {}
 extern "C" WEAK void __iar_file_Mtxlock(__iar_Rmtx *mutex) {}
 extern "C" WEAK void __iar_file_Mtxunlock(__iar_Rmtx *mutex) {}
 #if defined(__IAR_SYSTEMS_ICC__ ) && (__VER__ >= 8000000)
-extern "C" WEAK void *__aeabi_read_tp (void) { return NULL ;}
+#pragma section="__iar_tls$$DATA"
+extern "C" WEAK void *__aeabi_read_tp (void) {
+  // Thread Local storage is not supported, using main thread memory for errno
+  return __section_begin("__iar_tls$$DATA");
+}
 #endif
 #elif defined(__CC_ARM)
 // Do nothing
@@ -967,6 +996,10 @@ extern "C" void __env_unlock( struct _reent *_r )
 {
     __rtos_env_unlock(_r);
 }
+
+#endif
+
+#if defined (__GNUC__) || defined(__CC_ARM) || (defined (__ARMCC_VERSION) && (__ARMCC_VERSION >= 6010050))
 
 #define CXA_GUARD_INIT_DONE             (1 << 0)
 #define CXA_GUARD_INIT_IN_PROGRESS      (1 << 1)
@@ -1006,6 +1039,99 @@ extern "C" void __cxa_guard_abort(int *guard_object_p)
 
 #endif
 
+#if defined(MBED_MEM_TRACING_ENABLED) && (defined(__CC_ARM) || defined(__ICCARM__))
+
+// If the memory tracing is enabled, the wrappers in mbed_alloc_wrappers.cpp
+// provide the implementation for these. Note: this needs to use the wrappers
+// instead of malloc()/free() as the caller address would point to wrappers,
+// not the caller of "new" or "delete".
+extern "C" void* malloc_wrapper(size_t size, const void* caller);
+extern "C" void free_wrapper(void *ptr, const void* caller);
+    
+void *operator new(std::size_t count)
+{
+    void *buffer = malloc_wrapper(count, MBED_CALLER_ADDR());
+    if (NULL == buffer) {
+        error("Operator new out of memory\r\n");
+    }
+    return buffer;
+}
+
+void *operator new[](std::size_t count)
+{
+    void *buffer = malloc_wrapper(count, MBED_CALLER_ADDR());
+    if (NULL == buffer) {
+        error("Operator new[] out of memory\r\n");
+    }
+    return buffer;
+}
+
+void *operator new(std::size_t count, const std::nothrow_t& tag)
+{
+    return malloc_wrapper(count, MBED_CALLER_ADDR());
+}
+
+void *operator new[](std::size_t count, const std::nothrow_t& tag)
+{
+    return malloc_wrapper(count, MBED_CALLER_ADDR());
+}
+
+void operator delete(void *ptr)
+{
+    free_wrapper(ptr, MBED_CALLER_ADDR());
+}
+void operator delete[](void *ptr)
+{
+    free_wrapper(ptr, MBED_CALLER_ADDR());
+}
+
+#elif defined(MBED_MEM_TRACING_ENABLED) && defined(__GNUC__)
+
+#include <reent.h>
+
+extern "C" void* malloc_wrapper(struct _reent * r, size_t size, void * caller);
+extern "C" void free_wrapper(struct _reent * r, void * ptr, void * caller);
+
+void *operator new(std::size_t count)
+{
+    void *buffer = malloc_wrapper(_REENT, count, MBED_CALLER_ADDR());
+    if (NULL == buffer) {
+        error("Operator new out of memory\r\n");
+    }
+    return buffer;
+}
+
+void *operator new[](std::size_t count)
+{
+    void *buffer = malloc_wrapper(_REENT, count, MBED_CALLER_ADDR());
+    if (NULL == buffer) {
+        error("Operator new[] out of memory\r\n");
+    }
+    return buffer;
+}
+
+void *operator new(std::size_t count, const std::nothrow_t& tag)
+{
+    return malloc_wrapper(_REENT, count, MBED_CALLER_ADDR());
+}
+
+void *operator new[](std::size_t count, const std::nothrow_t& tag)
+{
+    return malloc_wrapper(_REENT, count, MBED_CALLER_ADDR());
+}
+
+void operator delete(void *ptr)
+{
+    free_wrapper(_REENT, ptr, MBED_CALLER_ADDR());
+}
+
+void operator delete[](void *ptr)
+{
+    free_wrapper(_REENT, ptr, MBED_CALLER_ADDR());
+}
+
+#else
+
 void *operator new(std::size_t count)
 {
     void *buffer = malloc(count);
@@ -1036,16 +1162,14 @@ void *operator new[](std::size_t count, const std::nothrow_t& tag)
 
 void operator delete(void *ptr)
 {
-    if (ptr != NULL) {
-        free(ptr);
-    }
+    free(ptr);
 }
 void operator delete[](void *ptr)
 {
-    if (ptr != NULL) {
-        free(ptr);
-    }
+    free(ptr);
 }
+
+#endif
 
 /* @brief   standard c library clock() function.
  *

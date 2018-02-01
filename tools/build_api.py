@@ -27,6 +27,7 @@ from os import linesep, remove, makedirs
 from time import time
 from intelhex import IntelHex
 from json import load, dump
+from tools.arm_pack_manager import Cache
 
 from tools.utils import mkdir, run_cmd, run_cmd_ext, NotSupportedException,\
     ToolException, InvalidReleaseTargetException, intelhex_offset
@@ -283,31 +284,6 @@ def get_mbed_official_release(version):
 
     return mbed_official_release
 
-def add_regions_to_profile(profile, config, toolchain_class):
-    """Add regions to the build profile, if there are any.
-
-    Positional Arguments:
-    profile - the profile to update
-    config - the configuration object that owns the region
-    toolchain_class - the class of the toolchain being used
-    """
-    if not profile:
-        return
-    regions = list(config.regions)
-    for region in regions:
-        for define in [(region.name.upper() + "_ADDR", region.start),
-                       (region.name.upper() + "_SIZE", region.size)]:
-            profile["common"].append("-D%s=0x%x" %  define)
-    active_region = [r for r in regions if r.active][0]
-    for define in [("MBED_APP_START", active_region.start),
-                   ("MBED_APP_SIZE", active_region.size)]:
-        profile["ld"].append(toolchain_class.make_ld_define(*define))
-
-    print("Using regions in this build:")
-    for region in regions:
-        print("  Region %s size 0x%x, offset 0x%x"
-              % (region.name, region.size, region.start))
-
 
 def prepare_toolchain(src_paths, build_dir, target, toolchain_name,
                       macros=None, clean=False, jobs=1,
@@ -350,9 +326,6 @@ def prepare_toolchain(src_paths, build_dir, target, toolchain_name,
     for contents in build_profile or []:
         for key in profile:
             profile[key].extend(contents[toolchain_name][key])
-
-    if config.has_regions:
-        add_regions_to_profile(profile, config, cur_tc)
 
     toolchain = cur_tc(target, notify, macros, silent, build_dir=build_dir,
                        extra_verbose=extra_verbose, build_profile=profile)
@@ -446,13 +419,6 @@ def scan_resources(src_paths, toolchain, dependencies_paths=None,
     if  (hasattr(toolchain.target, "release_versions") and
             "5" not in toolchain.target.release_versions and
             "rtos" in toolchain.config.lib_config_data):
-        if "Cortex-A" in toolchain.target.core:
-            raise NotSupportedException(
-                ("%s Will be supported in mbed OS 5.6. "
-                    "To use the %s, please checkout the mbed OS 5.4 release branch. "
-                    "See https://developer.mbed.org/platforms/Renesas-GR-PEACH/#important-notice "
-                    "for more information") % (toolchain.target.name, toolchain.target.name))
-        else:
             raise NotSupportedException("Target does not support mbed OS 5")
 
     return resources
@@ -559,19 +525,24 @@ def build_project(src_paths, build_path, target, toolchain_name,
         memap_instance = getattr(toolchain, 'memap_instance', None)
         memap_table = ''
         if memap_instance:
-            # Write output to stdout in text (pretty table) format
-            memap_table = memap_instance.generate_output('table', stats_depth)
-
+            real_stats_depth = stats_depth if stats_depth is None else 2
+            memap_table = memap_instance.generate_output('table', real_stats_depth)
             if not silent:
-                print memap_table
+                if not stats_depth:
+                    memap_bars = memap_instance.generate_output('bars',
+                            real_stats_depth, None,
+                            getattr(toolchain.target, 'device_name', None))
+                    print memap_bars
+                else:
+                    print memap_table
 
             # Write output to file in JSON format
             map_out = join(build_path, name + "_map.json")
-            memap_instance.generate_output('json', stats_depth, map_out)
+            memap_instance.generate_output('json', real_stats_depth, map_out)
 
             # Write output to file in CSV format for the CI
             map_csv = join(build_path, name + "_map.csv")
-            memap_instance.generate_output('csv-ci', stats_depth, map_csv)
+            memap_instance.generate_output('csv-ci', real_stats_depth, map_csv)
 
         resources.detect_duplicates(toolchain)
 
@@ -580,7 +551,8 @@ def build_project(src_paths, build_path, target, toolchain_name,
             cur_result["elapsed_time"] = end - start
             cur_result["output"] = toolchain.get_output() + memap_table
             cur_result["result"] = "OK"
-            cur_result["memory_usage"] = memap_instance.mem_report
+            cur_result["memory_usage"] = (memap_instance.mem_report
+                                          if memap_instance is not None else None)
             cur_result["bin"] = res
             cur_result["elf"] = splitext(res)[0] + ".elf"
             cur_result.update(toolchain.report)
@@ -1010,19 +982,6 @@ def build_mbed_libs(target, toolchain_name, verbose=False,
         config.add_config_files([MBED_CONFIG_FILE])
         toolchain.set_config_data(toolchain.config.get_config_data())
 
-        # CMSIS
-        toolchain.info("Building library %s (%s, %s)" %
-                       ('CMSIS', target.name, toolchain_name))
-        cmsis_src = MBED_CMSIS_PATH
-        resources = toolchain.scan_resources(cmsis_src)
-
-        toolchain.copy_files(resources.headers, build_target)
-        toolchain.copy_files(resources.linker_script, build_toolchain)
-        toolchain.copy_files(resources.bin_files, build_toolchain)
-
-        objects = toolchain.compile_sources(resources, tmp_path)
-        toolchain.copy_files(objects, build_toolchain)
-
         # mbed
         toolchain.info("Building library %s (%s, %s)" %
                        ('MBED', target.name, toolchain_name))
@@ -1038,9 +997,12 @@ def build_mbed_libs(target, toolchain_name, verbose=False,
             toolchain.copy_files(resources.headers, dest)
             library_incdirs.append(dest)
 
-        # Target specific sources
-        hal_src = MBED_TARGETS_PATH
-        hal_implementation = toolchain.scan_resources(hal_src)
+        cmsis_implementation = toolchain.scan_resources(MBED_CMSIS_PATH)
+        toolchain.copy_files(cmsis_implementation.headers, build_target)
+        toolchain.copy_files(cmsis_implementation.linker_script, build_toolchain)
+        toolchain.copy_files(cmsis_implementation.bin_files, build_toolchain)
+
+        hal_implementation = toolchain.scan_resources(MBED_TARGETS_PATH)
         toolchain.copy_files(hal_implementation.headers +
                              hal_implementation.hex_files +
                              hal_implementation.libraries +
@@ -1049,8 +1011,8 @@ def build_mbed_libs(target, toolchain_name, verbose=False,
         toolchain.copy_files(hal_implementation.linker_script, build_toolchain)
         toolchain.copy_files(hal_implementation.bin_files, build_toolchain)
         incdirs = toolchain.scan_resources(build_target).inc_dirs
-        objects = toolchain.compile_sources(hal_implementation,
-                                            library_incdirs + incdirs)
+        objects = toolchain.compile_sources(cmsis_implementation + hal_implementation,
+                                            library_incdirs + incdirs + [tmp_path])
         toolchain.copy_files(objects, build_toolchain)
 
         # Common Sources

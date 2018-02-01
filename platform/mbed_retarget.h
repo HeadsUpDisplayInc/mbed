@@ -28,15 +28,17 @@
 /* We can get the following standard types from sys/types for gcc, but we
  * need to define the types ourselves for the other compilers that normally
  * target embedded systems */
-#if defined(__ARMCC_VERSION) || defined(__ICCARM__)
-typedef signed   int  ssize_t;  ///< Signed size type, usually encodes negative errors
-typedef signed   long off_t;    ///< Offset in a data stream
+typedef signed   int  ssize_t;     ///< Signed size type, usually encodes negative errors
+typedef signed   long off_t;       ///< Offset in a data stream
+typedef unsigned long long fsblkcnt_t;  ///< Count of file system blocks
+#if defined(__ARMCC_VERSION) || !defined(__GNUC__)
 typedef unsigned int  mode_t;   ///< Mode for opening files
 typedef unsigned int  dev_t;    ///< Device ID type
 typedef unsigned long ino_t;    ///< File serial number
 typedef unsigned int  nlink_t;  ///< Number of links to a file
 typedef unsigned int  uid_t;    ///< User ID
 typedef unsigned int  gid_t;    ///< Group ID
+#endif
 
 #define O_RDONLY 0      ///< Open for reading
 #define O_WRONLY 1      ///< Open for writing
@@ -45,26 +47,27 @@ typedef unsigned int  gid_t;    ///< Group ID
 #define O_TRUNC  0x0400 ///< Truncate file to zero length
 #define O_EXCL   0x0800 ///< Fail if file exists
 #define O_APPEND 0x0008 ///< Set file offset to end of file prior to each write
+#define O_BINARY 0x8000 ///< Open file in binary mode
 
 #define NAME_MAX 255    ///< Maximum size of a name in a file path
 
 #include <time.h>
 
-#else
-
-#include <sys/fcntl.h>
-#include <sys/types.h>
-#include <sys/syslimits.h>
-
-#endif
-
+/** \addtogroup platform */
+/** @{*/
+/**
+ * \defgroup platform_retarget Retarget functions
+ * @{
+ */
 
 /* DIR declarations must also be here */
 #if __cplusplus
 namespace mbed {
+
 class FileHandle;
 class DirHandle;
 std::FILE *mbed_fdopen(FileHandle *fh, const char *mode);
+
 }
 typedef mbed::DirHandle DIR;
 #else
@@ -86,7 +89,6 @@ extern "C" {
 #endif
 
 
-#if defined(__ARMCC_VERSION) || defined(__ICCARM__)
 /* The intent of this section is to unify the errno error values to match
  * the POSIX definitions for the GCC_ARM, ARMCC and IAR compilers. This is
  * necessary because the ARMCC/IAR errno.h, or sys/stat.h are missing some
@@ -357,9 +359,7 @@ extern "C" {
 #define EOWNERDEAD      130     /* Owner died */
 #undef  ENOTRECOVERABLE
 #define ENOTRECOVERABLE 131     /* State not recoverable */
-#endif
 
-#if defined(__ARMCC_VERSION) || defined(__ICCARM__)
 /* Missing stat.h defines.
  * The following are sys/stat.h definitions not currently present in the ARMCC
  * errno.h. Note, ARMCC errno.h defines some symbol values differing from
@@ -416,7 +416,27 @@ struct stat {
     time_t    st_ctime;   ///< Time of last status change
 };
 
-#endif /* defined(__ARMCC_VERSION) || defined(__ICCARM__) */
+struct statvfs {
+    unsigned long  f_bsize;    ///< Filesystem block size
+    unsigned long  f_frsize;   ///< Fragment size (block size)
+
+    fsblkcnt_t     f_blocks;   ///< Number of blocks
+    fsblkcnt_t     f_bfree;    ///< Number of free blocks
+    fsblkcnt_t     f_bavail;   ///< Number of free blocks for unprivileged users
+
+    unsigned long  f_fsid;     ///< Filesystem ID
+
+    unsigned long  f_namemax;  ///< Maximum filename length
+};
+
+#if __cplusplus
+extern "C" {
+#endif
+    int stat(const char *path, struct stat *st);
+    int statvfs(const char *path, struct statvfs *buf);
+#if __cplusplus
+};
+#endif
 
 
 /* The following are dirent.h definitions are declared here to garuntee
@@ -437,5 +457,9 @@ enum {
     DT_LNK,     ///< This is a symbolic link.
     DT_SOCK,    ///< This is a UNIX domain socket.
 };
+
+/**@}*/
+
+/**@}*/
 
 #endif /* RETARGET_H */

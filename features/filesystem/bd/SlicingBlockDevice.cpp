@@ -17,17 +17,6 @@
 #include "SlicingBlockDevice.h"
 
 
-SlicingBlockDevice::SlicingBlockDevice(BlockDevice *bd, bd_addr_t start)
-    : _bd(bd)
-    , _start_from_end(false), _start(start)
-    , _stop_from_end(true), _stop(0)
-{
-    if ((int64_t)_start < 0) {
-        _start_from_end = true;
-        _start = -_start;
-    }
-}
-
 SlicingBlockDevice::SlicingBlockDevice(BlockDevice *bd, bd_addr_t start, bd_addr_t stop)
     : _bd(bd)
     , _start_from_end(false), _start(start)
@@ -38,7 +27,7 @@ SlicingBlockDevice::SlicingBlockDevice(BlockDevice *bd, bd_addr_t start, bd_addr
         _start = -_start;
     }
 
-    if ((int64_t)_stop < 0) {
+    if ((int64_t)_stop <= 0) {
         _stop_from_end = true;
         _stop = -_stop;
     }
@@ -75,6 +64,11 @@ int SlicingBlockDevice::deinit()
     return _bd->deinit();
 }
 
+int SlicingBlockDevice::sync()
+{
+    return _bd->sync();
+}
+
 int SlicingBlockDevice::read(void *b, bd_addr_t addr, bd_size_t size)
 {
     MBED_ASSERT(is_valid_read(addr, size));
@@ -106,6 +100,11 @@ bd_size_t SlicingBlockDevice::get_program_size() const
 bd_size_t SlicingBlockDevice::get_erase_size() const
 {
     return _bd->get_erase_size();
+}
+
+int SlicingBlockDevice::get_erase_value() const
+{
+    return _bd->get_erase_value();
 }
 
 bd_size_t SlicingBlockDevice::size() const

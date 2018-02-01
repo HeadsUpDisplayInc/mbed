@@ -54,7 +54,7 @@ public:
 public:
 
     /**
-    * @param[ref] ble
+    * @param _ble
     *               BLE object for the underlying controller.
     */
     UARTService(BLE &_ble) :
@@ -105,7 +105,7 @@ public:
      * a long read request; this is because notifications include only the first
      * 20 bytes of the updated data.
      *
-     * @param  buffer The received update.
+     * @param  _buffer The received update.
      * @param  length Number of characters to be appended.
      * @return        Number of characters appended to the rxCharacteristic.
      */
