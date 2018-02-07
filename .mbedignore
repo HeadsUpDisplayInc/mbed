@@ -1,0 +1,17 @@
+events/*
+rtos/*
+features/FEATURE_CLIENT/*
+features/FEATURE_COMMON_PAL/*
+features/FEATURE_UVISOR/*
+features/frameworks/*
+features/net/*
+features/netsocket/*
+features/storage/*
+features/FEATURE_BLE/*
+features/filesystem/*
+targets/TARGET_NORDIC/TARGET_NRF5/TARGET_SDK11/ble/*
+targets/TARGET_NORDIC/TARGET_NRF5/TARGET_SDK11/libraries/bootloader_dfu/*
+targets/TARGET_NORDIC/TARGET_NRF5/TARGET_SDK11/libraries/fstorage/*
+targets/TARGET_NORDIC/TARGET_NRF5/TARGET_SDK11/libraries/fds/*
+targets/TARGET_NORDIC/TARGET_NRF5/TARGET_SDK11/libraries/crc16/*
+targets/TARGET_NORDIC/TARGET_NRF5/TARGET_SDK11/libraries/trace/*
